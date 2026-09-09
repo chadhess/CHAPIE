@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "CHAPIE"
+version = "0.1.0"
+description = "Conceptual Hybrid Aircraft Propulsion Integration Environment"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Chad Hess"}]
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.21",
+    "scipy>=1.7",
+    "matplotlib>=3.4",
+]
+
+[project.urls]
+Repository = "https://github.com/chadhess/CHAPIE"
+
+[tool.setuptools.packages.find]
+include = ["CHAPIE*"]
