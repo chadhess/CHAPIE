@@ -49,9 +49,11 @@ def solve_mission(
         FC covers up to fc_max (altitude-derated for the phase's rep_alt_ft).
         Buffer battery covers any shortfall between FC output and demand.
     Cruise
-        FC runs at max to recharge the buffer battery until full, then
-        throttles to meet demand only.  Ends when H2 is exhausted or
-        target_range_nm is reached, whichever comes first.
+        FC output is capped at its altitude-derated maximum each step.
+        If FC max exceeds demand, the surplus charges the buffer battery.
+        If FC max is below demand, the battery covers the shortfall and
+        cruise ends when either H2 is exhausted, the battery reaches its
+        reserve, or target_range_nm is reached — whichever comes first.
     Post-cruise 'battery' phases
         Battery only; FC not active.
 
@@ -154,10 +156,14 @@ def solve_mission(
         target_cruise_nm = None
 
     if is_h2:
-        while h2_rem > 1e-9:
+        while h2_rem > 1e-9 and bat_e > reserve_kWh + 1e-9:
             P_req = aircraft.cruise_power_kW(mass)
 
-            # Charge battery from FC headroom if not full
+            # FC output is capped at its derated maximum.
+            # Any shortfall below P_req is drawn from the battery.
+            P_fc_max_step = min(fc_max_crs, P_req)
+
+            # Charge battery from FC headroom if not full and FC has spare capacity
             if bat_e < bat_cap - 1e-6:
                 P_fc_headroom = fc_max_crs - P_req
                 if P_fc_headroom > 0.0:
@@ -169,7 +175,9 @@ def solve_mission(
             else:
                 P_fc_chg = 0.0
 
-            P_fc_out  = P_req + P_fc_chg
+            P_fc_out    = P_fc_max_step + P_fc_chg   # capped at fc_max_crs
+            P_bat_draw  = max(0.0, P_req - P_fc_max_step)  # battery covers shortfall
+
             speed_tas = cas_to_tas(aircraft.cruise_speed_kts(mass), mission.cruise_alt_ft)
             dist_full = speed_tas * dt_h
 
@@ -181,23 +189,44 @@ def solve_mission(
                 dist           = remaining
                 target_reached = True
             else:
-                dt_use         = dt_h
-                dist           = dist_full
-                target_reached = False
+                # Battery depletion partial-step (mirrors battery-electric logic)
+                if P_bat_draw > 0.0:
+                    available_bat = bat_e - reserve_kWh
+                    dE_bat_full   = P_bat_draw * dt_h / eta_dis
+                    if dE_bat_full >= available_bat:
+                        dt_use         = available_bat * eta_dis / P_bat_draw
+                        dist           = speed_tas * dt_use
+                        target_reached = True   # reuse flag to trigger break after step
+                    else:
+                        dt_use         = dt_h
+                        dist           = dist_full
+                        target_reached = False
+                else:
+                    dt_use         = dt_h
+                    dist           = dist_full
+                    target_reached = False
 
+            # Apply H2 consumption
             dh2_demand  = P_fc_out * dt_use / (eta_fc_bop * H2_LHV_kWh_per_kg)
             dh2         = min(dh2_demand, h2_rem)
-            P_fc_actual = dh2 * eta_fc_bop * H2_LHV_kWh_per_kg / dt_use
+            P_fc_actual = dh2 * eta_fc_bop * H2_LHV_kWh_per_kg / dt_use if dt_use > 0 else 0.0
 
             h2_rem    -= dh2
             h2_burned += dh2
             mass      -= dh2
 
-            P_fc_chg_actual = max(0.0, P_fc_actual - P_req)
+            # Battery charging from FC headroom (only when FC exceeds demand)
+            P_fc_chg_actual = max(0.0, P_fc_actual - P_fc_max_step)
             if P_fc_chg_actual > 0.0:
                 dE_chg  = P_fc_chg_actual * eta_chg * dt_use
                 bat_e   = min(bat_cap, bat_e + dE_chg)
                 bat_chg += dE_chg
+
+            # Battery draw for FC shortfall
+            if P_bat_draw > 0.0:
+                dE_bat  = P_bat_draw * dt_use / eta_dis
+                bat_e  -= dE_bat
+                bat_dis += dE_bat
 
             t         += dt_use
             t_crs     += dt_use
