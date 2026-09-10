@@ -339,8 +339,7 @@ def run_optimal_mission(cruise_alt_ft: float = 5000.0) -> None:
     CHAPIE solver with that design and print detailed mission outputs.
 
     This demonstrates how to take optimization results and feed them directly
-    into the main solver — the same workflow as running a hand-specified
-    configuration in cargo_ectol_h2_350bar_mission_opt.py.
+    into the main solver.
     """
     print(f'\nFinding optimal FC at {cruise_alt_ft:.0f} ft cruise...')
     fc_powers, ranges, costs_per_nm, togw_lbs = fc_sizing_sweep(cruise_alt_ft)
